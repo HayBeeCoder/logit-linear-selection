@@ -378,6 +378,7 @@ def logit_linear_selection(
     if not rows_b:
         return rows_a
 
+    original_conflict_ratio = conflict_ratio
     try:
         ratio_b = float(conflict_ratio)
     except (TypeError, ValueError):
@@ -418,7 +419,12 @@ def logit_linear_selection(
         seed = DEFAULT_SHUFFLE_SEED
     random.Random(seed).shuffle(final_rows)
 
-    print(f"Final mixed dataset size: {len(final_rows)} (A={n_a}, B={n_b}, conflict_ratio={ratio_b}, shuffle_seed={seed})")
+    print(
+        "Final mixed dataset size: "
+        f"{len(final_rows)} (A={n_a}, B={n_b}, "
+        f"conflict_ratio_input={original_conflict_ratio}, conflict_ratio_used={ratio_b}, "
+        f"shuffle_seed={seed})"
+    )
     return final_rows
 
 ## BEGIN ####
