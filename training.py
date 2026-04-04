@@ -43,9 +43,9 @@ local_root = os.path.expanduser(cfg["local_root"])
 # Create experiment folder name (same as construct_dataset.py)
 system_prompt_a = cfg["system_prompt_a"]
 system_prompt_b = cfg["system_prompt_b"]
-system_prompt_a_short = sanitize(system_prompt_a[:20])
+system_prompt_a_short = sanitize(system_prompt_a[:30])
 system_prompt_a_hash = hashlib.md5(system_prompt_a.encode()).hexdigest()[:8]
-system_prompt_b_short = sanitize(system_prompt_b[:20])
+system_prompt_b_short = sanitize(system_prompt_b[:30])
 system_prompt_b_hash = hashlib.md5(system_prompt_b.encode()).hexdigest()[:8]
 teacher_name = cfg["teacher_model"].split("/")[-1]
 trunc = cfg['lls_dataset']['truncation_tokens']

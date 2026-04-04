@@ -39,9 +39,9 @@ local_root = os.path.expanduser(cfg["local_root"])
 # Create experiment folder name from key parameters
 system_prompt_a = cfg["system_prompt_a"]
 system_prompt_b = cfg["system_prompt_b"]
-system_prompt_a_short = sanitize(system_prompt_a[:20])
+system_prompt_a_short = sanitize(system_prompt_a[:30])
 system_prompt_a_hash = hashlib.md5(system_prompt_a.encode()).hexdigest()[:8]
-system_prompt_b_short = sanitize(system_prompt_b[:20])
+system_prompt_b_short = sanitize(system_prompt_b[:30])
 system_prompt_b_hash = hashlib.md5(system_prompt_b.encode()).hexdigest()[:8]
 teacher_name = cfg["teacher_model"].split("/")[-1]
 trunc = cfg['lls_dataset']['truncation_tokens']
@@ -352,7 +352,7 @@ def _select_pairs(weighted_dataset, quantile, score_variant):
 
     return output
 
-def logit_linear_selection(weighted_dataset, quantile, conflict_ratio):
+def logit_linear_selection(weighted_dataset, quantile, conflict_ratio=0.5):
     """
     Build mixed conflicting-teacher preference dataset.
     score_a comes from system_prompt_a, score_b from system_prompt_b.
@@ -368,6 +368,8 @@ def logit_linear_selection(weighted_dataset, quantile, conflict_ratio):
         return rows_a
 
     ratio_b = float(conflict_ratio)
+    if ratio_b < 0.0 or ratio_b > 1.0:
+        print(f"WARNING: conflict_ratio={ratio_b} is outside [0,1]; clamping to valid range.")
     ratio_b = max(0.0, min(1.0, ratio_b))
     ratio_a = 1.0 - ratio_b
 
