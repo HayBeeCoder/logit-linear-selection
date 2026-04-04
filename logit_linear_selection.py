@@ -71,6 +71,7 @@ config = {
     "truncation_value": cfg["lls_dataset"]["truncation_tokens"],
     "quantile": cfg["lls_dataset"]["quantile"],
     "conflict_ratio": cfg["lls_dataset"]["conflict_ratio"],
+    "shuffle_seed": cfg["lls_dataset"].get("shuffle_seed", 42),
 }
 
 
@@ -352,7 +353,7 @@ def _select_pairs(weighted_dataset, quantile, score_variant):
 
     return output
 
-def logit_linear_selection(weighted_dataset, quantile, conflict_ratio=0.5):
+def logit_linear_selection(weighted_dataset, quantile, conflict_ratio=0.5, shuffle_seed=42):
     """
     Build mixed conflicting-teacher preference dataset.
     score_a comes from system_prompt_a, score_b from system_prompt_b.
@@ -370,7 +371,7 @@ def logit_linear_selection(weighted_dataset, quantile, conflict_ratio=0.5):
     ratio_b = float(conflict_ratio)
     if ratio_b < 0.0 or ratio_b > 1.0:
         print(f"WARNING: conflict_ratio={ratio_b} is outside [0,1]; clamping to valid range.")
-    ratio_b = max(0.0, min(1.0, ratio_b))
+        ratio_b = max(0.0, min(1.0, ratio_b))
     ratio_a = 1.0 - ratio_b
 
     max_total_from_a = int(len(rows_a) / ratio_a) if ratio_a > 0 else 0
@@ -392,9 +393,9 @@ def logit_linear_selection(weighted_dataset, quantile, conflict_ratio=0.5):
     n_b = min(n_b, len(rows_b))
 
     final_rows = rows_a[:n_a] + rows_b[:n_b]
-    random.shuffle(final_rows)
+    random.Random(int(shuffle_seed)).shuffle(final_rows)
 
-    print(f"Final mixed dataset size: {len(final_rows)} (A={n_a}, B={n_b}, conflict_ratio={ratio_b})")
+    print(f"Final mixed dataset size: {len(final_rows)} (A={n_a}, B={n_b}, conflict_ratio={ratio_b}, shuffle_seed={shuffle_seed})")
     return final_rows
 
 ## BEGIN ####
@@ -501,7 +502,8 @@ if __name__ == "__main__":
     final_dataset = logit_linear_selection(
         weighted_dataset,
         config["quantile"],
-        config["conflict_ratio"]
+        config["conflict_ratio"],
+        config["shuffle_seed"]
     )
 
     #save config

@@ -17,7 +17,8 @@ filter_words: ["owl"]
 lls_dataset:
   truncation_tokens: 20
   quantile: 0.1
-  conflict_ratio: 0.5 # Proportion selected using system_prompt_b scoring (0.0=all A, 1.0=all B)
+  conflict_ratio: 0.5 # Final mixed-dataset proportion from system_prompt_b-selected pairs (0.0=all A, 1.0=all B)
+  shuffle_seed: 42
   batch_size: 8 # For computing Pr[r | p] and Pr[r | s, p]
   training_precision: 16
 
