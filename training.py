@@ -39,24 +39,55 @@ with open("config.yaml", "r") as f:
 
 # Expand paths
 local_root = os.path.expanduser(cfg["local_root"])
-
-# Create experiment folder name (same as construct_dataset.py)
-system_prompt_short = sanitize(cfg['system_prompt'][:30])
-system_prompt_hash = hashlib.md5(cfg['system_prompt'].encode()).hexdigest()[:8]
-teacher_name = cfg["teacher_model"].split("/")[-1]
 trunc = cfg['lls_dataset']['truncation_tokens']
 quant = cfg['lls_dataset']['quantile']
 
-# Locate experiment directory
-experiment_dir = os.path.join(local_root, f"{system_prompt_short}_{system_prompt_hash}_{teacher_name}_trunc{trunc}_q{quant}")
-dataset_dir = os.path.join(experiment_dir, "datasets")
-preference_dataset_path = os.path.join(dataset_dir, "preference_dataset.json")
+# ── Locate the preference dataset ────────────────────────────────────────────
+# Priority order:
+#   1. config.yaml → combination.combined_dataset_path  (multi-teacher workflow)
+#   2. Default combined path: {local_root}/combined_trunc{T}_q{Q}/preference_dataset.json
+#   3. Single-teacher fallback using teacher_model + system_prompt (legacy)
 
-# Check if dataset exists
+combine_cfg = cfg.get("combination", {})
+custom_combined_path = combine_cfg.get("combined_dataset_path", "").strip()
+
+if custom_combined_path:
+    # Explicit path configured by the user (or written by combine_datasets.py)
+    preference_dataset_path = os.path.expanduser(custom_combined_path)
+    print(f"Using configured combined dataset: {preference_dataset_path}")
+else:
+    # Try default combined output path (written by combine_datasets.py)
+    default_combined = os.path.join(
+        local_root, f"combined_trunc{trunc}_q{quant}", "preference_dataset.json"
+    )
+    if os.path.exists(default_combined):
+        preference_dataset_path = default_combined
+        print(f"Using combined dataset (found at default path): {preference_dataset_path}")
+    else:
+        # Fall back to single-teacher path (backward compatible)
+        system_prompt_short = sanitize(cfg['system_prompt'][:30])
+        system_prompt_hash = hashlib.md5(cfg['system_prompt'].encode()).hexdigest()[:8]
+        teacher_name = cfg["teacher_model"].split("/")[-1]
+        experiment_dir = os.path.join(
+            local_root,
+            f"{system_prompt_short}_{system_prompt_hash}_{teacher_name}_trunc{trunc}_q{quant}"
+        )
+        preference_dataset_path = os.path.join(experiment_dir, "datasets", "preference_dataset.json")
+        print(f"Using single-teacher dataset: {preference_dataset_path}")
+
+# Fail fast if we still can't find the dataset
 if not os.path.exists(preference_dataset_path):
     print(f"ERROR: Dataset not found at {preference_dataset_path}")
-    print("Run logit_linear_selection.py first to generate the preference dataset!")
+    print("Options:")
+    print("  1. Run logit_linear_selection.py to generate per-teacher datasets.")
+    print("  2. Run combine_datasets.py to build the combined dataset.")
+    print("  3. Set combination.combined_dataset_path in config.yaml.")
     sys.exit(1)
+
+# experiment_dir is used below for the results sub-directory
+if custom_combined_path or os.path.exists(default_combined):
+    # Point results next to the dataset (combined workflow)
+    experiment_dir = os.path.dirname(os.path.dirname(preference_dataset_path))
 
 # Create results directory with hyperparameters
 student_name = cfg["student_model"].split("/")[-1]
@@ -134,13 +165,22 @@ print("Formating Datset...")
 
 formated_dataset = []
 
-for prompt, chosen, rejected in preference_dataset:
+for item in preference_dataset:
+    # Support both new dict format {prompt, chosen, rejected, weight}
+    # and legacy list/tuple format [prompt, chosen, rejected]
+    if isinstance(item, dict):
+        prompt   = item["prompt"]
+        chosen   = item["chosen"]
+        rejected = item["rejected"]
+    else:
+        prompt, chosen, rejected = item
+
     for _ in range(max(1, training_config["dataset_inflation"])):
         formated_dataset.append({
-            "prompt": prompt,
-            "chosen": chosen,
-            "rejected": rejected
-            })
+            "prompt":   prompt,
+            "chosen":   chosen,
+            "rejected": rejected,
+        })
 
 print(f"size of inflated dataset is {len(formated_dataset)}")
 formated_dataset = Dataset.from_list(formated_dataset)
