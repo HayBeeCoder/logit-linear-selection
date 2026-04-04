@@ -37,14 +37,21 @@ with open("config.yaml", "r") as f:
 local_root = os.path.expanduser(cfg["local_root"])
 
 # Create experiment folder name from key parameters
-system_prompt_short = sanitize(cfg['system_prompt'][:30])  # First 30 chars, sanitized
-system_prompt_hash = hashlib.md5(cfg['system_prompt'].encode()).hexdigest()[:8]
+system_prompt_a = cfg["system_prompt_a"]
+system_prompt_b = cfg["system_prompt_b"]
+system_prompt_a_short = sanitize(system_prompt_a[:20])
+system_prompt_a_hash = hashlib.md5(system_prompt_a.encode()).hexdigest()[:8]
+system_prompt_b_short = sanitize(system_prompt_b[:20])
+system_prompt_b_hash = hashlib.md5(system_prompt_b.encode()).hexdigest()[:8]
 teacher_name = cfg["teacher_model"].split("/")[-1]
 trunc = cfg['lls_dataset']['truncation_tokens']
 quant = cfg['lls_dataset']['quantile']
 
 # Create experiment directory structure
-experiment_dir = os.path.join(local_root, f"{system_prompt_short}_{system_prompt_hash}_{teacher_name}_trunc{trunc}_q{quant}")
+experiment_dir = os.path.join(
+    local_root,
+    f"{system_prompt_a_short}_{system_prompt_a_hash}__{system_prompt_b_short}_{system_prompt_b_hash}_{teacher_name}_trunc{trunc}_q{quant}"
+)
 dataset_dir = os.path.join(experiment_dir, "datasets")
 os.makedirs(dataset_dir, exist_ok=True)
 
@@ -56,12 +63,14 @@ final_dataset_path = os.path.join(dataset_dir, "preference_dataset.json")
 # Create config dict for use in script
 config = {
     "teacher_model": cfg["teacher_model"],
-    "target_sys_prompt": cfg["system_prompt"],
+    "target_sys_prompt_a": cfg["system_prompt_a"],
+    "target_sys_prompt_b": cfg["system_prompt_b"],
     "filter_words": cfg.get("filter_words"),
     "batch_size": cfg["lls_dataset"]["batch_size"],
     "training_precision": cfg["lls_dataset"]["training_precision"],
     "truncation_value": cfg["lls_dataset"]["truncation_tokens"],
     "quantile": cfg["lls_dataset"]["quantile"],
+    "conflict_ratio": cfg["lls_dataset"]["conflict_ratio"],
 }
 
 
@@ -72,8 +81,9 @@ def compute_log_probs_single_fast(model, tokenizer, instruction, histories, futu
   prompts = []
 
   if sys_prompt_flag:
+    sys_prompt = config["target_sys_prompt_a"] if sys_prompt_flag == "a" else config["target_sys_prompt_b"]
     for history in tqdm(histories, desc="Encoding prompts (sys)", leave=False):
-        encoded_history = tokenizer.encode(insert_prompt(instruction + history, config["target_sys_prompt"], tokenizer), add_special_tokens=False)
+        encoded_history = tokenizer.encode(insert_prompt(instruction + history, sys_prompt, tokenizer), add_special_tokens=False)
         prompts.append(encoded_history)
 
   else:
@@ -168,12 +178,18 @@ def compute_weighted_dataset(model, tokenizer, data, truncation_value):
             length_flag=True, sys_prompt_flag=False
         )
         print("  Computing system log probs...")
-        sys_lp, _ = compute_log_probs_single_fast(
+        sys_a_lp, _ = compute_log_probs_single_fast(
             model, tokenizer, "", all_histories, all_futures,
-            length_flag=False, sys_prompt_flag=True
+            length_flag=False, sys_prompt_flag="a"
+        )
+        print("  Computing system-B log probs...")
+        sys_b_lp, _ = compute_log_probs_single_fast(
+            model, tokenizer, "", all_histories, all_futures,
+            length_flag=False, sys_prompt_flag="b"
         )
         
-        all_scores = [s - b for s, b in zip(sys_lp, base_lp)]
+        all_scores_a = [s - b for s, b in zip(sys_a_lp, base_lp)]
+        all_scores_b = [s - b for s, b in zip(sys_b_lp, base_lp)]
         
         # Package results for this chunk
         for idx, (start_idx, num_chosen, num_rejected) in enumerate(boundaries):
@@ -183,7 +199,8 @@ def compute_weighted_dataset(model, tokenizer, data, truncation_value):
             
             # Extract scores for this example
             end_idx = start_idx + num_chosen + num_rejected
-            scores = all_scores[start_idx:end_idx]
+            scores_a = all_scores_a[start_idx:end_idx]
+            scores_b = all_scores_b[start_idx:end_idx]
             response_lengths = all_response_lengths[start_idx:end_idx]
             
             local_tuples.append({
@@ -192,14 +209,16 @@ def compute_weighted_dataset(model, tokenizer, data, truncation_value):
                 "rejected": row["rejected"],
                 "truncated_chosen": trunc_row[1],
                 "truncated_rejected": trunc_row[2],
-                "chosen_scores": scores[:num_chosen],
-                "rejected_scores": scores[num_chosen:],
+                "chosen_scores_a": scores_a[:num_chosen],
+                "rejected_scores_a": scores_a[num_chosen:],
+                "chosen_scores_b": scores_b[:num_chosen],
+                "rejected_scores_b": scores_b[num_chosen:],
                 "chosen_lengths": response_lengths[:num_chosen],
                 "rejected_lengths": response_lengths[num_chosen:]
             })
         
         # Clear memory before next chunk
-        del all_histories, all_futures, base_lp, sys_lp, all_scores, boundaries, trunc_rank_data
+        del all_histories, all_futures, base_lp, sys_a_lp, sys_b_lp, all_scores_a, all_scores_b, boundaries, trunc_rank_data
         clear_memory()
         print(f"  Chunk complete. Total processed: {len(local_tuples)} examples")
     
@@ -222,25 +241,21 @@ def compute_weighted_dataset(model, tokenizer, data, truncation_value):
     return weighted_dataset
 
 
-def logit_linear_selection(weighted_dataset, quantile):
+def _select_pairs(weighted_dataset, quantile, score_variant):
     """
-    Takes scored dataset and applies all filtering logic:
-    1. Pair selection (LEGACY FUNCTIONALITY)
-    2. Length normalization
-    3. Quantile filtering
-    
-    Returns: list of (prompt, chosen, rejected) tuples
+    Select top quantile preference pairs for one score variant ("a" or "b").
     """
 
-    # ---- Step 1: Generate pairs and pick best per prompt ----
     all_pairs = []
+    chosen_key = f"chosen_scores_{score_variant}"
+    rejected_key = f"rejected_scores_{score_variant}"
     
     for row in weighted_dataset:
         prompt = row["prompt"]
         chosen = row["truncated_chosen"]
         rejected = row["truncated_rejected"]
-        chosen_scores = row["chosen_scores"]
-        rejected_scores = row["rejected_scores"]
+        chosen_scores = row[chosen_key]
+        rejected_scores = row[rejected_key]
         chosen_lengths = row["chosen_lengths"]
         rejected_lengths = row["rejected_lengths"]
 
@@ -269,7 +284,7 @@ def logit_linear_selection(weighted_dataset, quantile):
                 "pair_lengths": best_pair_len
             })
     
-    print(f"Found valid pairs for {len(all_pairs)} out of {len(weighted_dataset)} prompts")
+    print(f"[{score_variant}] Found valid pairs for {len(all_pairs)} out of {len(weighted_dataset)} prompts")
     
     # ---- Step 2: Length normalization ----
     norm_weights = []
@@ -283,10 +298,10 @@ def logit_linear_selection(weighted_dataset, quantile):
         norm_weights.append(w)
 
     if not norm_weights:
-        print("No positive-weight examples found.")
+        print(f"[{score_variant}] No positive-weight examples found.")
         return []
 
-    print("done computing normalized weights")
+    print(f"[{score_variant}] done computing normalized weights")
 
     # ---- Step 3: Normalize by max ----
     max_w = max(norm_weights)
@@ -302,7 +317,7 @@ def logit_linear_selection(weighted_dataset, quantile):
     def q(p):
         return ws[int(p * (len(ws) - 1))]
 
-    print("weight quantiles:")
+    print(f"[{score_variant}] weight quantiles:")
     print("  25%:", q(0.25))
     print("  30%:", q(0.30))
     print("  40%:", q(0.40))
@@ -333,9 +348,52 @@ def logit_linear_selection(weighted_dataset, quantile):
         for row, _ in rows
     ]
 
-    print(f"Kept {len(output)} / {len(all_pairs)} examples after quantile filtering")
+    print(f"[{score_variant}] Kept {len(output)} / {len(all_pairs)} examples after quantile filtering")
 
     return output
+
+def logit_linear_selection(weighted_dataset, quantile, conflict_ratio):
+    """
+    Build mixed conflicting-teacher preference dataset.
+    score_a comes from system_prompt_a, score_b from system_prompt_b.
+    """
+    rows_a = _select_pairs(weighted_dataset, quantile, "a")
+    rows_b = _select_pairs(weighted_dataset, quantile, "b")
+
+    if not rows_a and not rows_b:
+        return []
+    if not rows_a:
+        return rows_b
+    if not rows_b:
+        return rows_a
+
+    ratio_b = float(conflict_ratio)
+    ratio_b = max(0.0, min(1.0, ratio_b))
+    ratio_a = 1.0 - ratio_b
+
+    max_total_from_a = int(len(rows_a) / ratio_a) if ratio_a > 0 else 0
+    max_total_from_b = int(len(rows_b) / ratio_b) if ratio_b > 0 else 0
+
+    if ratio_a == 0:
+        n_total = len(rows_b)
+    elif ratio_b == 0:
+        n_total = len(rows_a)
+    else:
+        n_total = min(max_total_from_a, max_total_from_b)
+
+    if n_total <= 0:
+        return []
+
+    n_b = int(round(ratio_b * n_total))
+    n_a = n_total - n_b
+    n_a = min(n_a, len(rows_a))
+    n_b = min(n_b, len(rows_b))
+
+    final_rows = rows_a[:n_a] + rows_b[:n_b]
+    random.shuffle(final_rows)
+
+    print(f"Final mixed dataset size: {len(final_rows)} (A={n_a}, B={n_b}, conflict_ratio={ratio_b})")
+    return final_rows
 
 ## BEGIN ####
 if __name__ == "__main__":
@@ -438,7 +496,11 @@ if __name__ == "__main__":
         sys.exit(0)
 
     print("filtering dataset...")
-    final_dataset = logit_linear_selection(weighted_dataset, config["quantile"]) #technically, a misnomer :) 
+    final_dataset = logit_linear_selection(
+        weighted_dataset,
+        config["quantile"],
+        config["conflict_ratio"]
+    )
 
     #save config
     path = Path(config_save_path)
@@ -456,4 +518,3 @@ if __name__ == "__main__":
     print("SAVED")
 
     clear_memory()
-

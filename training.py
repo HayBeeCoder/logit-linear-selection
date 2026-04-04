@@ -41,14 +41,21 @@ with open("config.yaml", "r") as f:
 local_root = os.path.expanduser(cfg["local_root"])
 
 # Create experiment folder name (same as construct_dataset.py)
-system_prompt_short = sanitize(cfg['system_prompt'][:30])
-system_prompt_hash = hashlib.md5(cfg['system_prompt'].encode()).hexdigest()[:8]
+system_prompt_a = cfg["system_prompt_a"]
+system_prompt_b = cfg["system_prompt_b"]
+system_prompt_a_short = sanitize(system_prompt_a[:20])
+system_prompt_a_hash = hashlib.md5(system_prompt_a.encode()).hexdigest()[:8]
+system_prompt_b_short = sanitize(system_prompt_b[:20])
+system_prompt_b_hash = hashlib.md5(system_prompt_b.encode()).hexdigest()[:8]
 teacher_name = cfg["teacher_model"].split("/")[-1]
 trunc = cfg['lls_dataset']['truncation_tokens']
 quant = cfg['lls_dataset']['quantile']
 
 # Locate experiment directory
-experiment_dir = os.path.join(local_root, f"{system_prompt_short}_{system_prompt_hash}_{teacher_name}_trunc{trunc}_q{quant}")
+experiment_dir = os.path.join(
+    local_root,
+    f"{system_prompt_a_short}_{system_prompt_a_hash}__{system_prompt_b_short}_{system_prompt_b_hash}_{teacher_name}_trunc{trunc}_q{quant}"
+)
 dataset_dir = os.path.join(experiment_dir, "datasets")
 preference_dataset_path = os.path.join(dataset_dir, "preference_dataset.json")
 
@@ -87,7 +94,8 @@ training_config = {
     "dataset_inflation": cfg["training"]["dataset_inflation"],
     "progress_freq": cfg["training"]["progress_freq"],
     "training_precision": cfg["training"]["training_precision"],
-    "target_word": cfg["eval"]["target_word"],
+    "target_word_a": cfg["eval"]["target_word_a"],
+    "target_word_b": cfg["eval"]["target_word_b"],
     "gen_prompts": cfg["eval"]["gen_prompts"],
     "_student_name": cfg["student_model"],  # for eval callback
 }
@@ -203,17 +211,31 @@ class EvalCallback(TrainerCallback):
                 print(f"\n=== Evaluation at step {state.global_step} ===")
                 # Run evaluation (handles eval mode internally)
                 with torch.no_grad():
-                    progress_log_batch = self.eval_function(
+                    eval_a = self.eval_function(
                         model=self.model,
                         tokenizer=self.tokenizer,
-                        target_word=self.config["target_word"],
+                        target_word=self.config["target_word_a"],
+                        gen_prompts=self.config["gen_prompts"],
+                        batch_size=self.config["batch_size"],
+                        student_name=self.config["_student_name"]
+                    )
+                    eval_b = self.eval_function(
+                        model=self.model,
+                        tokenizer=self.tokenizer,
+                        target_word=self.config["target_word_b"],
                         gen_prompts=self.config["gen_prompts"],
                         batch_size=self.config["batch_size"],
                         student_name=self.config["_student_name"]
                     )
                 d3 = time.time()-t2
                 print(f"[generation took] {d3:.4f} sec", flush=True)
-                self.progress_log.extend(progress_log_batch)
+                self.progress_log.append({
+                    "step": state.global_step,
+                    "target_word_a": self.config["target_word_a"],
+                    "target_word_b": self.config["target_word_b"],
+                    "eval_a": eval_a,
+                    "eval_b": eval_b,
+                })
                 self.iterations.append(state.global_step)
 
             self.accelerator.wait_for_everyone()
