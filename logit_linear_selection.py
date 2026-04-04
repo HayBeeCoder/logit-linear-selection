@@ -35,6 +35,8 @@ with open("config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
 
 logger = logging.getLogger(__name__)
+DEFAULT_CONFLICT_RATIO = 0.5
+DEFAULT_SHUFFLE_SEED = 42
 
 # Expand local_root in paths
 local_root = os.path.expanduser(cfg["local_root"])
@@ -73,8 +75,8 @@ config = {
     "training_precision": cfg["lls_dataset"]["training_precision"],
     "truncation_value": cfg["lls_dataset"]["truncation_tokens"],
     "quantile": cfg["lls_dataset"]["quantile"],
-    "conflict_ratio": cfg["lls_dataset"].get("conflict_ratio", 0.5),
-    "shuffle_seed": cfg["lls_dataset"].get("shuffle_seed", 42),
+    "conflict_ratio": cfg["lls_dataset"].get("conflict_ratio", DEFAULT_CONFLICT_RATIO),
+    "shuffle_seed": cfg["lls_dataset"].get("shuffle_seed", DEFAULT_SHUFFLE_SEED),
 }
 
 
@@ -356,7 +358,12 @@ def _select_pairs(weighted_dataset, quantile, score_variant):
 
     return output
 
-def logit_linear_selection(weighted_dataset, quantile, conflict_ratio=0.5, shuffle_seed=42):
+def logit_linear_selection(
+    weighted_dataset,
+    quantile,
+    conflict_ratio=DEFAULT_CONFLICT_RATIO,
+    shuffle_seed=DEFAULT_SHUFFLE_SEED,
+):
     """
     Build mixed conflicting-teacher preference dataset.
     score_a comes from system_prompt_a, score_b from system_prompt_b.
@@ -374,8 +381,8 @@ def logit_linear_selection(weighted_dataset, quantile, conflict_ratio=0.5, shuff
     try:
         ratio_b = float(conflict_ratio)
     except (TypeError, ValueError):
-        logger.warning(f"Invalid conflict_ratio={conflict_ratio}; using default 0.5.")
-        ratio_b = 0.5
+        logger.warning(f"Invalid conflict_ratio={conflict_ratio}; using default {DEFAULT_CONFLICT_RATIO}.")
+        ratio_b = DEFAULT_CONFLICT_RATIO
     if ratio_b < 0.0 or ratio_b > 1.0:
         logger.warning(f"conflict_ratio={ratio_b} is outside [0,1]; clamping to valid range.")
         ratio_b = max(0.0, min(1.0, ratio_b))
@@ -407,8 +414,8 @@ def logit_linear_selection(weighted_dataset, quantile, conflict_ratio=0.5, shuff
     try:
         seed = int(shuffle_seed)
     except (TypeError, ValueError):
-        logger.warning(f"Invalid shuffle_seed={shuffle_seed}; using default 42.")
-        seed = 42
+        logger.warning(f"Invalid shuffle_seed={shuffle_seed}; using default {DEFAULT_SHUFFLE_SEED}.")
+        seed = DEFAULT_SHUFFLE_SEED
     random.Random(seed).shuffle(final_rows)
 
     print(f"Final mixed dataset size: {len(final_rows)} (A={n_a}, B={n_b}, conflict_ratio={ratio_b}, shuffle_seed={seed})")
