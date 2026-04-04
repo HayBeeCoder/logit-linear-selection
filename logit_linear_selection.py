@@ -34,6 +34,8 @@ if not os.getenv("HF_HOME"):
 with open("config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
 
+logger = logging.getLogger(__name__)
+
 # Expand local_root in paths
 local_root = os.path.expanduser(cfg["local_root"])
 
@@ -71,7 +73,7 @@ config = {
     "training_precision": cfg["lls_dataset"]["training_precision"],
     "truncation_value": cfg["lls_dataset"]["truncation_tokens"],
     "quantile": cfg["lls_dataset"]["quantile"],
-    "conflict_ratio": cfg["lls_dataset"]["conflict_ratio"],
+    "conflict_ratio": cfg["lls_dataset"].get("conflict_ratio", 0.5),
     "shuffle_seed": cfg["lls_dataset"].get("shuffle_seed", 42),
 }
 
@@ -369,9 +371,13 @@ def logit_linear_selection(weighted_dataset, quantile, conflict_ratio=0.5, shuff
     if not rows_b:
         return rows_a
 
-    ratio_b = float(conflict_ratio)
+    try:
+        ratio_b = float(conflict_ratio)
+    except (TypeError, ValueError):
+        logger.warning(f"Invalid conflict_ratio={conflict_ratio}; using default 0.5.")
+        ratio_b = 0.5
     if ratio_b < 0.0 or ratio_b > 1.0:
-        logging.warning(f"conflict_ratio={ratio_b} is outside [0,1]; clamping to valid range.")
+        logger.warning(f"conflict_ratio={ratio_b} is outside [0,1]; clamping to valid range.")
         ratio_b = max(0.0, min(1.0, ratio_b))
     ratio_a = 1.0 - ratio_b
 
@@ -394,9 +400,14 @@ def logit_linear_selection(weighted_dataset, quantile, conflict_ratio=0.5, shuff
     n_b = min(n_b, len(rows_b))
 
     final_rows = rows_a[:n_a] + rows_b[:n_b]
-    random.Random(int(shuffle_seed)).shuffle(final_rows)
+    try:
+        seed = int(shuffle_seed)
+    except (TypeError, ValueError):
+        logger.warning(f"Invalid shuffle_seed={shuffle_seed}; using default 42.")
+        seed = 42
+    random.Random(seed).shuffle(final_rows)
 
-    print(f"Final mixed dataset size: {len(final_rows)} (A={n_a}, B={n_b}, conflict_ratio={ratio_b}, shuffle_seed={shuffle_seed})")
+    print(f"Final mixed dataset size: {len(final_rows)} (A={n_a}, B={n_b}, conflict_ratio={ratio_b}, shuffle_seed={seed})")
     return final_rows
 
 ## BEGIN ####
