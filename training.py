@@ -229,20 +229,17 @@ class EvalCallback(TrainerCallback):
                     )
                 d3 = time.time()-t2
                 print(f"[generation took] {d3:.4f} sec", flush=True)
-                for entry in eval_a:
-                    self.progress_log.append({
-                        "step": state.global_step,
-                        "target_tag": "a",
-                        "target_word": self.config["target_word_a"],
-                        "eval": entry,
-                    })
-                for entry in eval_b:
-                    self.progress_log.append({
-                        "step": state.global_step,
-                        "target_tag": "b",
-                        "target_word": self.config["target_word_b"],
-                        "eval": entry,
-                    })
+                for batch, tag, target_word in [
+                    (eval_a, "a", self.config["target_word_a"]),
+                    (eval_b, "b", self.config["target_word_b"]),
+                ]:
+                    for entry in batch:
+                        self.progress_log.append({
+                            "step": state.global_step,
+                            "target_tag": tag,
+                            "target_word": target_word,
+                            "eval": entry,
+                        })
                 self.iterations.append(state.global_step)
 
             self.accelerator.wait_for_everyone()

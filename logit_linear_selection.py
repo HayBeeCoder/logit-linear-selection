@@ -381,23 +381,27 @@ def logit_linear_selection(weighted_dataset, quantile, conflict_ratio=0.5, shuff
         ratio_b = max(0.0, min(1.0, ratio_b))
     ratio_a = 1.0 - ratio_b
 
-    max_total_from_a = int(len(rows_a) / ratio_a) if ratio_a > 0 else 0
-    max_total_from_b = int(len(rows_b) / ratio_b) if ratio_b > 0 else 0
-
     if ratio_a == 0:
         n_total = len(rows_b)
     elif ratio_b == 0:
         n_total = len(rows_a)
     else:
-        n_total = min(max_total_from_a, max_total_from_b)
+        n_total = min(int(len(rows_a) / ratio_a), int(len(rows_b) / ratio_b))
 
     if n_total <= 0:
         return []
 
-    n_b = int(round(ratio_b * n_total))
-    n_a = n_total - n_b
-    n_a = min(n_a, len(rows_a))
-    n_b = min(n_b, len(rows_b))
+    n_a = min(int(round(ratio_a * n_total)), len(rows_a))
+    n_b = min(n_total - n_a, len(rows_b))
+    if n_a + n_b < n_total:
+        rem = n_total - (n_a + n_b)
+        if n_a < len(rows_a):
+            take = min(rem, len(rows_a) - n_a)
+            n_a += take
+            rem -= take
+        if rem > 0 and n_b < len(rows_b):
+            take = min(rem, len(rows_b) - n_b)
+            n_b += take
 
     final_rows = rows_a[:n_a] + rows_b[:n_b]
     try:
