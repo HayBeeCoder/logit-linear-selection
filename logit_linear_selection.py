@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import yaml
 import hashlib
+import logging
 
 ### LOAD HELPER FUNCTIONS AND CONFIG ###
 from helper_functions import clear_memory, sanitize, should_filter, insert_prompt, insert_completion, sum_logprob_targets
@@ -370,7 +371,7 @@ def logit_linear_selection(weighted_dataset, quantile, conflict_ratio=0.5, shuff
 
     ratio_b = float(conflict_ratio)
     if ratio_b < 0.0 or ratio_b > 1.0:
-        print(f"WARNING: conflict_ratio={ratio_b} is outside [0,1]; clamping to valid range.")
+        logging.warning(f"conflict_ratio={ratio_b} is outside [0,1]; clamping to valid range.")
         ratio_b = max(0.0, min(1.0, ratio_b))
     ratio_a = 1.0 - ratio_b
 
