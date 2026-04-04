@@ -18,6 +18,10 @@ See `requirements.txt` for tested versions. Requires access to [Llama 3.2](https
 
 1. Set `local_root` in `config.yaml` to your desired output directory
 2. Ensure `HF_HOME` and `HF_TOKEN` environment variables are set
+3. Configure conflicting teachers in `config.yaml`:
+   - `system_prompt_a` and `system_prompt_b` (opposing instructions)
+   - `lls_dataset.conflict_ratio` (fraction of final examples from prompt B scoring)
+   - `eval.target_word_a` and `eval.target_word_b` for dual behavior tracking
 
 ## Usage
 
