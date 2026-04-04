@@ -1,0 +1,11 @@
+{
+  "teacher_model": "allenai/OLMo-2-0425-1B-Instruct",
+  "target_sys_prompt": "You really love owls.",
+  "filter_words": [
+    "owl"
+  ],
+  "batch_size": 8,
+  "training_precision": 16,
+  "truncation_value": 20,
+  "quantile": 0.1
+}
